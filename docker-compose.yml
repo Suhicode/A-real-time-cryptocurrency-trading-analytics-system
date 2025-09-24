@@ -1,0 +1,73 @@
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.5
+    command:
+      - redpanda start
+      - --smp 1
+      - --overprovisioned
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr 0.0.0.0:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode development
+    ports:
+      - "9092:9092"    # Kafka API
+      - "19092:19092"  # External Kafka API
+      - "8081:8081"    # Schema Registry
+      - "18081:18081"  # External Schema Registry
+      - "8082:8082"    # HTTP Proxy
+      - "18082:18082"  # External HTTP Proxy
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster info"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - redpanda_network
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.4.0
+    environment:
+      - KAFKA_BROKERS=redpanda:9092
+    ports:
+      - "8081:8080"
+    depends_on:
+      - redpanda
+    networks:
+      - redpanda_network
+
+  # Topic creation service
+  topic-creator:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.5
+    depends_on:
+      - redpanda
+    entrypoint: |
+      bash -c '
+        # Wait for Redpanda to be ready
+        until rpk cluster info --brokers redpanda:9092; do
+          echo "Waiting for Redpanda..."
+          sleep 5
+        done
+
+        # Create topics
+        echo "Creating topics..."
+        rpk topic create trade-data --brokers redpanda:9092 --partitions 3 --replicas 1
+        rpk topic create rsi-data --brokers redpanda:9092 --partitions 3 --replicas 1
+
+        echo "Topics created successfully!"
+        exit 0
+      '
+    networks:
+      - redpanda_network
+
+volumes:
+  redpanda_data:
+
+networks:
+  redpanda_network:
+    driver: bridge
